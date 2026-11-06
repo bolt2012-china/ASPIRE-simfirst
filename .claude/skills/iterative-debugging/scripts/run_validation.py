@@ -83,6 +83,43 @@ def benchmark_environment(benchmark: str, gpu: int | str, *, root: Path) -> dict
             ),
             "PYTHONHASHSEED": "0",
         }
+    if benchmark == "simfirst":
+        # Condition A/C switch: SIMFIRST_MODE=nominal|aligned (default aligned / C).
+        # Agent/Stage-2 episodes need RGB for SAM3; regression/settle can still
+        # override SIMFIRST_ENABLE_CAMERAS=0 in the parent environment.
+        aspire_src = str(root / "src")
+        sim_real_src = os.environ.get(
+            "SIM_REAL_SRC", "/hy-tmp/work/vendor/sim-real/src"
+        )
+        pythonpath = os.pathsep.join(
+            part
+            for part in (aspire_src, sim_real_src, os.environ.get("PYTHONPATH", ""))
+            if part
+        )
+        return {
+            "CUDA_VISIBLE_DEVICES": str(gpu),
+            "SIMFIRST_DEVICE": "cuda:0",
+            "SIMFIRST_HEADLESS": os.environ.get("SIMFIRST_HEADLESS", "1"),
+            "SIMFIRST_MODE": os.environ.get("SIMFIRST_MODE", "aligned"),
+            "SIMFIRST_ENABLE_CAMERAS": os.environ.get("SIMFIRST_ENABLE_CAMERAS", "1"),
+            "SIMFIRST_ALLOW_ISAAC6": os.environ.get("SIMFIRST_ALLOW_ISAAC6", "1"),
+            "SIMFIRST_SKIP_CONTACT_SENSORS": os.environ.get(
+                "SIMFIRST_SKIP_CONTACT_SENSORS", "1"
+            ),
+            "SIM_REAL_ROOT": os.environ.get(
+                "SIM_REAL_ROOT", "/hy-tmp/work/vendor/sim-real"
+            ),
+            "ISAAC_PY": os.environ.get(
+                "ISAAC_PY", "/hy-tmp/work/venvs/isaacsim6/bin/python"
+            ),
+            "PYTHONPATH": pythonpath,
+            "ACCEPT_EULA": "Y",
+            "OMNI_KIT_ACCEPT_EULA": "YES",
+            "PRIVACY_CONSENT": "Y",
+            "TMPDIR": "/hy-tmp/tmp",
+            "PYTHONHASHSEED": "0",
+            "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": "1",
+        }
     return {
         "MUJOCO_GL": "egl",
         "PYOPENGL_PLATFORM": "egl",
@@ -502,14 +539,16 @@ def finish(
 def main() -> int:
     args = parse_args()
     if args.init_mode is None:
-        args.init_mode = "seeded" if args.benchmark == "libero-pro" else "saved"
+        args.init_mode = (
+            "seeded" if args.benchmark in {"libero-pro", "simfirst"} else "saved"
+        )
     if args.workers < 1:
         raise SystemExit("--workers must be at least 1")
     if args.workers > 1 and args.benchmark not in {"libero-pro", "robosuite"}:
         raise SystemExit("worker reuse only supports libero-pro and robosuite; use --workers 1")
-    if args.init_mode != "saved" and args.benchmark != "libero-pro":
+    if args.init_mode != "saved" and args.benchmark not in {"libero-pro", "simfirst"}:
         raise SystemExit(
-            "init_mode 'seeded' is only supported for the libero-pro benchmark; "
+            "init_mode 'seeded' is only supported for libero-pro and simfirst; "
             "pass --init-mode saved for other benchmarks"
         )
     # Resolve caller-relative paths before chdir, so relative --program /

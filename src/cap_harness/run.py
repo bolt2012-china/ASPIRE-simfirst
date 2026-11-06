@@ -19,7 +19,7 @@ from .runtime import ProgramExecutionResult, ProgramExecutor
 
 DEFAULT_MAX_STEPS = 1000
 
-_CLOSE_AFTER_RECORDING = frozenset({"behavior"})
+_CLOSE_AFTER_RECORDING = frozenset({"behavior", "simfirst"})
 """Benchmarks whose simulator must outlive artifact finalization (Isaac Sim ends the process)."""
 BEHAVIOR_VIDEO_FRAME_STRIDE = 3
 
@@ -83,12 +83,16 @@ def run_program(
     allow_motion: bool = False,
 ) -> RunOutcome:
     """Run an episode, using its task horizon when max_steps is not supplied."""
-    if benchmark not in {"behavior", "libero-pro", "robosuite", "yam_real"}:
-        raise ValueError("benchmark must be behavior, libero-pro, robosuite, or yam_real")
+    if benchmark not in {"behavior", "libero-pro", "robosuite", "yam_real", "simfirst"}:
+        raise ValueError(
+            "benchmark must be behavior, libero-pro, robosuite, yam_real, or simfirst"
+        )
     if init_mode not in {"saved", "seeded"}:
         raise ValueError("init_mode must be 'saved' or 'seeded'")
-    if init_mode != "saved" and benchmark != "libero-pro":
-        raise ValueError("init_mode 'seeded' is only supported for the libero-pro benchmark")
+    if init_mode != "saved" and benchmark not in {"libero-pro", "simfirst"}:
+        raise ValueError(
+            "init_mode 'seeded' is only supported for libero-pro and simfirst benchmarks"
+        )
     if seed < 0:
         raise ValueError("seed must be non-negative")
     if max_steps is not None and max_steps <= 0:
@@ -122,6 +126,14 @@ def run_program(
         metadata = registry.resolve(suite, task_id)
         adapter_type = YamRealAdapter
         extension_allowlist = YAM_REAL_PUBLIC_TOOL_NAMES
+    elif benchmark == "simfirst":
+        from .simfirst.adapter import SimFirstAdapter
+        from .simfirst.registry import SimFirstTaskRegistry
+
+        registry = SimFirstTaskRegistry()
+        metadata = registry.resolve(suite, task_id)
+        adapter_type = SimFirstAdapter
+        extension_allowlist = None
     else:
         from cap_harness.registry import ROBOSUITE_PUBLIC_TOOL_NAMES
         from cap_harness.robosuite.adapter import RobosuiteAdapter
@@ -167,7 +179,9 @@ def run_program(
         capture_videos=capture_videos,
         providers=provider_capabilities,
         # Isaac renders at 30 Hz; every third frame keeps videos at 10 fps.
-        video_frame_stride=BEHAVIOR_VIDEO_FRAME_STRIDE if benchmark == "behavior" else 1,
+        video_frame_stride=(
+            BEHAVIOR_VIDEO_FRAME_STRIDE if benchmark in {"behavior", "simfirst"} else 1
+        ),
         step_video=benchmark != "yam_real",
     )
     adapter: object | None = None
@@ -253,6 +267,14 @@ def run_program(
                     registry=registry,
                     run_observer=recorder,
                     allow_physical_motion=allow_motion,
+                )
+                recorder.frequency = adapter.control_frequency
+            elif benchmark == "simfirst":
+                adapter = adapter_type(
+                    registry=registry,
+                    run_observer=recorder,
+                    mode=os.environ.get("SIMFIRST_MODE"),
+                    device=os.environ.get("SIMFIRST_DEVICE"),
                 )
                 recorder.frequency = adapter.control_frequency
             else:
